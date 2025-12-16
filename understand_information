@@ -1,0 +1,100 @@
+import understand
+import csv
+import os
+
+# ==============================
+# 設定
+# ==============================
+UDB_PATH = "your_project.udb"
+TARGET_DIR = r"C:/work/project/src"
+OUT_CSV = "information_browser_dump.csv"
+
+# ==============================
+# 情報ブラウザ項目マッピング
+# ※ Understand GUI の「情報ブラウザ」に
+#   表示される代表的な項目を手動で定義
+# ==============================
+INFO_BROWSER_ITEMS = {
+    "Summary": {
+        "Language": lambda f: f.language(),
+        "Kind": lambda f: f.kindname(),
+    },
+    "Metrics": {
+        # Metrics 名は Understand 側の定義名を使用
+        # GUI 表示と完全一致しないものがあるため手動指定
+        "CountLine": lambda f: f.metric("CountLine"),
+        "CountLineCode": lambda f: f.metric("CountLineCode"),
+        "CountDeclFunction": lambda f: f.metric("CountDeclFunction"),
+    },
+    "Depends": {
+        # ファイルが依存している対象
+        "Uses": lambda f: [
+            r.ent().longname()
+            for r in f.refs()
+            if r.kindname().startswith("Use")
+        ]
+    },
+    "UsedBy": {
+        # ファイルを使用している対象
+        "Used By": lambda f: [
+            r.ent().longname()
+            for r in f.refs("Useby")
+        ]
+    }
+}
+
+# ==============================
+# メイン処理
+# ==============================
+db = understand.open(UDB_PATH)
+
+with open(OUT_CSV, "w", newline="", encoding="utf-8") as csvfile:
+    writer = csv.writer(csvfile)
+    writer.writerow([
+        "File",
+        "Category",
+        "Item",
+        "Value",
+        "IB_Match"   # 情報ブラウザと一致するか
+    ])
+
+    for file_ent in db.ents("File"):
+        file_path = file_ent.longname().replace("\\", "/")
+        if not file_path.startswith(TARGET_DIR.replace("\\", "/")):
+            continue
+
+        # --- 情報ブラウザ一致項目 ---
+        for category, items in INFO_BROWSER_ITEMS.items():
+            for item_name, getter in items.items():
+                try:
+                    value = getter(file_ent)
+                except:
+                    value = None
+
+                # リストは1要素1行に展開
+                if isinstance(value, list):
+                    if not value:
+                        writer.writerow([
+                            file_path, category, item_name, "", "YES"
+                        ])
+                    for v in value:
+                        writer.writerow([
+                            file_path, category, item_name, v, "YES"
+                        ])
+                else:
+                    writer.writerow([
+                        file_path, category, item_name, value, "YES"
+                    ])
+
+        # --- 情報ブラウザ非一致（Metrics 全量） ---
+        for m in file_ent.metrics():
+            if m not in INFO_BROWSER_ITEMS.get("Metrics", {}):
+                writer.writerow([
+                    file_path,
+                    "Metrics",
+                    m,
+                    file_ent.metric(m),
+                    "NO"
+                ])
+
+db.close()
